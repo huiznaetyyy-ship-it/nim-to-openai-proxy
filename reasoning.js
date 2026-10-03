@@ -157,13 +157,11 @@ const REASONING_EFFORT_ENUMS = {
   'openai/gpt-oss-20b': ['low', 'medium', 'high'],
   'deepseek-ai/deepseek-v4-flash-0731': ['low', 'high', 'max'],
   'deepseek-ai/deepseek-v4-pro-0813': ['low', 'high', 'max'],
-  'deepseek-ai/deepseek-v4.1-flash': ['low', 'high', 'max'],   // ← ДОБАВЛЕНО
   'nvidia/nemotron-3-super-120b-a12b': ['low'],
   'nvidia/nemotron-3-ultra-550b-a55b': ['low'],
   'minimaxai/minimax-m3': ['adaptive'],
   'moonshotai/kimi-k3': ['low', 'high', 'max'],
-  'meta/muse-glimmer-30b': ['none', 'minimal', 'low', 'medium', 'high', 'max'],
-  'z-ai/glm-5.3-flash': ['low', 'high', 'max']                 // ← ДОБАВЛЕНО
+  'meta/muse-glimmer-30b': ['none', 'minimal', 'low', 'medium', 'high', 'max']
 };
 
 function validReasoningEffort(model, effort) {
@@ -189,18 +187,6 @@ function resolveEffectiveThinking(enableThinking, clientReasoningEffort) {
 // tier mapping is this proxy's own approximation, not an NVIDIA-defined enum.
 const NEMOTRON_LIGHTNING_BUDGET_MAP = { low: 2048, medium: 8192, high: 16384, max: -1 };
 
-// ─── RP- Friendly Defaults ─────────────────────────────────────────────
-// When the client doesn't send reasoning_effort, these defaults are used.
-// Tuned for roleplay: light reasoning for speed, enough for coherence.
-// TODO: make configurable via DEFAULT_REASONING_EFFORT env var in Railway.
-const RP_DEFAULT_EFFORT = {
-  'moonshotai/kimi-k3': 'low',           // fast, minimal thinking
-  'deepseek-ai/deepseek-v4.1-flash': 40, // numeric 1-100, light reasoning
-  'z-ai/glm-5.3-flash': 'low',          // GLM thinking always on, low budget
-  'openai/gpt-oss-120b': 'low',
-  'openai/gpt-oss-20b': 'low',
-};
-
 // Returns model-specific reasoning request payloads, spread into the
 // top-level request body. reasoning_effort "off"/"on" overrides
 // ENABLE_THINKING_MODE per-request for every model below.
@@ -212,28 +198,25 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     : clientReasoningEffort;
   const effort = validReasoningEffort(model, rawEffort);
 
-  // Use RP-friendly default if client didn't specify effort
-  const effectiveEffort = effort || RP_DEFAULT_EFFORT[model] || 'low';
-
   switch (model) {
     case 'nvidia/nemotron-3-super-120b-a12b': {
       if (!enableThinking) return {};
       const payload = { chat_template_kwargs: { enable_thinking: true } };
-      if (effectiveEffort === 'low') payload.chat_template_kwargs.low_effort = true;
+      if (effort === 'low') payload.chat_template_kwargs.low_effort = true;
       return payload;
     }
 
     case 'nvidia/nemotron-3-ultra-550b-a55b': {
       if (!enableThinking) return {};
       const payload = { chat_template_kwargs: { enable_thinking: true } };
-      if (effectiveEffort === 'low') payload.chat_template_kwargs.low_effort = true;
-      if (hasTools) payload.chat_template_kwargs.force_nonempty_content = true;
+      if (effort === 'low') payload.chat_template_kwargs.low_effort = true;
+      if (hasTools) payload.chat_template_kwargs.force_nonempty_content = true; // unverified
       return payload;
     }
 
     case 'nvidia/nemotron-3.5-lightning-30b-a3b': {
       if (!enableThinking) return { reasoning_budget: 0 };
-      return { reasoning_budget: NEMOTRON_LIGHTNING_BUDGET_MAP[effectiveEffort] ?? 16384 };
+      return { reasoning_budget: NEMOTRON_LIGHTNING_BUDGET_MAP[effort] ?? 16384 };
     }
 
     case 'deepseek-ai/deepseek-v4-flash-0731':
@@ -244,25 +227,15 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
       return {
         chat_template_kwargs: {
           thinking: true,
-          reasoning_effort: effectiveEffort || 'high'
+          reasoning_effort: effort || 'high'
         }
       };
     }
 
-    // ← НОВЫЙ CASE: DeepSeek v4.1 Flash принимает ЧИСЛО, не строку
-    case 'deepseek-ai/deepseek-v4.1-flash': {
-      if (!enableThinking) return { reasoning_effort: 1 };
-      // v4.1 принимает ЧИСЛО 1–100. По умолчанию 100 (максимум).
-      const numericEffort = typeof effort === 'number'
-        ? effort
-        : ({ low: 20, high: 80, max: 100 })[effort] ?? 100;
-      return { reasoning_effort: numericEffort };
-    }
-
     case 'openai/gpt-oss-120b':
     case 'openai/gpt-oss-20b': {
-      if (effectiveEffort) return { reasoning_effort: effectiveEffort };
-      if (enableThinking) return { reasoning_effort: 'low' };  // RP default
+      if (effort) return { reasoning_effort: effort };
+      if (enableThinking) return { reasoning_effort: 'high' };
       return {};
     }
 
@@ -275,12 +248,16 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     }
 
     case 'meta/muse-glimmer-30b': {
-      if (effectiveEffort) return { reasoning_effort: effectiveEffort };
-      return { reasoning_effort: enableThinking ? 'low' : 'none' };
+      if (effort) return { reasoning_effort: effort };
+      return { reasoning_effort: enableThinking ? 'high' : 'none' };
     }
 
+    // poolside/laguna-xs-2.1: no documented reasoning param on NIM's hosted
+    // endpoint (model, messages, temperature, top_p, max_tokens, stream
+    // only). Falls through to default.
+
     case 'minimaxai/minimax-m3': {
-      const thinkingMode = effectiveEffort === 'adaptive'
+      const thinkingMode = effort === 'adaptive'
         ? 'adaptive'
         : (enableThinking ? 'enabled' : 'disabled');
       return { chat_template_kwargs: { thinking_mode: thinkingMode } };
@@ -289,17 +266,7 @@ function getReasoningPayload(model, enableThinking, clientReasoningEffort, hasTo
     case 'moonshotai/kimi-k3': {
       // No off-switch — omitting the field falls back to Kimi's own 'max'.
       if (effort) return { reasoning_effort: effort };
-      return { reasoning_effort: enableThinking ? 'max' : 'low' };
-    }
-
-    // ← НОВЫЙ CASE: GLM 5.3 Flash — thinking всегда включён, управляем budget
-    case 'z-ai/glm-5.3-flash': {
-      // GLM 5.3 не поддерживает отключение thinking, только бюджет.
-      // clear_thinking: true очищает историю размышлений из контекста (рекомендуется для RP)
-      return {
-        reasoning_effort: effort || 'max',
-        chat_template_kwargs: { clear_thinking: true }
-      };
+      return { reasoning_effort: enableThinking ? 'high' : 'low' };
     }
 
     default:
