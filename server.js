@@ -86,8 +86,8 @@ const MODEL_MAPPING = {
   'google-light': 'google/gemma-4-31b-it',
   'google-lightest': 'meta/muse-glimmer-30b',
   'google-lighter': 'poolside/laguna-xs-2.1',
-  'glm-5.3': 'z-ai/glm-5-3',
-  'glm-flash': 'z-ai/glm-5-3-flash', 
+  'glm-5.3': 'z-ai/glm-5.3',
+  'glm-flash': 'z-ai/glm-5-3-flash',
 
   // Vision-Modelle — nur Modelle, die erfolgreich auf Chat-Completions antworten.
   // Getestet am: 2026-09-17 — meta/llama-3.2-11b-vision-instruct: HTTP 200 ✓
@@ -479,8 +479,7 @@ app.post('/v1/chat/completions', async (req, res) => {
     upstreamStream = response.data;
     console.log('[PROXY] Model used:', usedModel);
 
-    // ↓↓↓ ИСПРАВЛЕНО: inlineReasoning по умолчанию true (если клиент явно не запретил) ↓↓↓
-    const inlineReasoning = req.headers['x-reasoning-format'] !== 'disabled';
+    const inlineReasoning = req.headers['x-reasoning-format'] === 'inline';
 
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -612,7 +611,7 @@ app.post('/v1/chat/completions', async (req, res) => {
 
         const toolRecoveryLeftover = toolRecovery.flush();
         if (toolRecoveryLeftover) {
-          console.warn('[TOOL_CALL_RECOVERY] Stream ended mid  tag; flushing raw text instead of dropping it.');
+          console.warn('[TOOL_CALL_RECOVERY] Stream ended mid <tool_call> tag; flushing raw text instead of dropping it.');
           flushedDelta.content = (flushedDelta.content || '') + toolRecoveryLeftover;
         }
 
