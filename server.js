@@ -86,7 +86,7 @@ const MODEL_MAPPING = {
   'google-light': 'google/gemma-4-31b-it',
   'google-lightest': 'meta/muse-glimmer-30b',
   'google-lighter': 'poolside/laguna-xs-2.1',
-  'glm-5.3': 'z-ai/glm-5.3',
+  'glm-5.3': 'z-ai/glm-5-3',
   'glm-flash': 'z-ai/glm-5.3-flash', // ← ИСПРАВЛЕНО: используем точку вместо дефиса
 
   // Vision-Modelle — nur Modelle, die erfolgreich auf Chat-Completions antworten.
