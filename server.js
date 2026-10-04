@@ -87,7 +87,7 @@ const MODEL_MAPPING = {
   'google-lightest': 'meta/muse-glimmer-30b',
   'google-lighter': 'poolside/laguna-xs-2.1',
   'glm-5.3': 'z-ai/glm-5.3',
-  'glm-flash': 'z-ai/glm-5.3-flash',
+  'glm-flash': 'z-ai/glm-5.3-flash', // ← ИСПРАВЛЕНО: используем точки, чтобы не было 404
 
   // Vision-Modelle — nur Modelle, die erfolgreich auf Chat-Completions antworten.
   // Getestet am: 2026-09-17 — meta/llama-3.2-11b-vision-instruct: HTTP 200 ✓
@@ -479,7 +479,8 @@ app.post('/v1/chat/completions', async (req, res) => {
     upstreamStream = response.data;
     console.log('[PROXY] Model used:', usedModel);
 
-    const inlineReasoning = req.headers['x-reasoning-format'] === 'inline';
+    // ↓↓↓ ИСПРАВЛЕНО: inlineReasoning по умолчанию true (если клиент явно не запретил) ↓↓↓
+    const inlineReasoning = req.headers['x-reasoning-format'] !== 'disabled';
 
     if (stream) {
       res.setHeader('Content-Type', 'text/event-stream');
@@ -525,22 +526,26 @@ app.post('/v1/chat/completions', async (req, res) => {
             const normalizedDelta = normalizer.processDelta(delta);
             let clientContent = '';
 
+            // ↓↓↓ ИСПРАВЛЕНО: Очистка от дублирующихся тегов ↓↓↓
             if (SHOW_REASONING && inlineReasoning) {
-              if (normalizedDelta.reasoning && !reasoningOpen) {
-                clientContent += `<thinking>\n${normalizedDelta.reasoning}`;
+              const cleanReasoning = (normalizedDelta.reasoning || '').replace(/<\/?(?:think|thinking)>/g, '');
+              const cleanContent = (normalizedDelta.content || '').replace(/<\/?(?:think|thinking)>/g, '');
+              
+              if (cleanReasoning && !reasoningOpen) {
+                clientContent += `<thinking>\n${cleanReasoning}`;
                 reasoningOpen = true;
-              } else if (normalizedDelta.reasoning) {
-                clientContent += normalizedDelta.reasoning;
+              } else if (cleanReasoning) {
+                clientContent += cleanReasoning;
               }
 
-              if (normalizedDelta.content && reasoningOpen) {
-                clientContent += `\n</thinking>\n\n${normalizedDelta.content}`;
+              if (cleanContent && reasoningOpen) {
+                clientContent += `\n</thinking>\n\n${cleanContent}`;
                 reasoningOpen = false;
-              } else if (normalizedDelta.content) {
-                clientContent += normalizedDelta.content;
+              } else if (cleanContent) {
+                clientContent += cleanContent;
               }
             } else {
-              clientContent = normalizedDelta.content || '';
+              clientContent = (normalizedDelta.content || '').replace(/<\/?(?:think|thinking)>/g, '');
             }
 
             const { content: recoveredContent, toolCallDeltas } = toolRecovery.process(clientContent);
@@ -611,7 +616,7 @@ app.post('/v1/chat/completions', async (req, res) => {
 
         const toolRecoveryLeftover = toolRecovery.flush();
         if (toolRecoveryLeftover) {
-          console.warn('[TOOL_CALL_RECOVERY] Stream ended mid <tool_call> tag; flushing raw text instead of dropping it.');
+          console.warn('[TOOL_CALL_RECOVERY] Stream ended mid  tag; flushing raw text instead of dropping it.');
           flushedDelta.content = (flushedDelta.content || '') + toolRecoveryLeftover;
         }
 
@@ -619,21 +624,24 @@ app.post('/v1/chat/completions', async (req, res) => {
           let clientContent = '';
 
           if (SHOW_REASONING && inlineReasoning) {
-            if (flushedDelta.reasoning && !reasoningOpen) {
-              clientContent += `<thinking>\n${flushedDelta.reasoning}`;
+            const cleanReasoning = (flushedDelta.reasoning || '').replace(/<\/?(?:think|thinking)>/g, '');
+            const cleanContent = (flushedDelta.content || '').replace(/<\/?(?:think|thinking)>/g, '');
+            
+            if (cleanReasoning && !reasoningOpen) {
+              clientContent += `<thinking>\n${cleanReasoning}`;
               reasoningOpen = true;
-            } else if (flushedDelta.reasoning) {
-              clientContent += flushedDelta.reasoning;
+            } else if (cleanReasoning) {
+              clientContent += cleanReasoning;
             }
 
-            if (flushedDelta.content && reasoningOpen) {
-              clientContent += `\n</thinking>\n\n${flushedDelta.content}`;
+            if (cleanContent && reasoningOpen) {
+              clientContent += `\n</thinking>\n\n${cleanContent}`;
               reasoningOpen = false;
-            } else if (flushedDelta.content) {
-              clientContent += flushedDelta.content;
+            } else if (cleanContent) {
+              clientContent += cleanContent;
             }
           } else {
-            clientContent = flushedDelta.content || '';
+            clientContent = (flushedDelta.content || '').replace(/<\/?(?:think|thinking)>/g, '');
           }
 
           const finalChunk = { choices: [{ delta: {} }] };
@@ -790,7 +798,7 @@ app.use((req, res) => {
 
 // ─── Startup ──────────────────────────────────────────────────────────────
 
-app.listen(PORT, () => {
+app.listen(PORT, '0.0.0.0', () => {
   console.log(`[PROXY] Hybrid proxy running on port ${PORT}`);
   console.log(`[PROXY] Max tokens limit: ${MAX_TOKENS_LIMIT}`);
   validateModels().catch(err => {
